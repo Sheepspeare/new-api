@@ -167,14 +167,7 @@ export const usePlaygroundState = () => {
   // 配置导入/重置
   const handleConfigImport = useCallback((importedConfig) => {
     if (importedConfig.inputs) {
-      const parsedMaxTokens = parseInt(importedConfig.inputs.max_tokens, 10);
-      setInputs((prev) => ({
-        ...prev,
-        ...importedConfig.inputs,
-        max_tokens: Number.isNaN(parsedMaxTokens)
-          ? importedConfig.inputs.max_tokens
-          : parsedMaxTokens,
-      }));
+      setInputs((prev) => ({ ...prev, ...importedConfig.inputs }));
     }
     if (importedConfig.parameterEnabled) {
       setParameterEnabled((prev) => ({

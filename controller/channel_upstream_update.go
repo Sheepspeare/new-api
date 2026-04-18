@@ -3,7 +3,6 @@ package controller
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -170,7 +169,10 @@ func collectPendingUpstreamModelChangesFromModels(
 		upstreamSet[modelName] = struct{}{}
 	}
 
-	normalizedIgnoredModels := normalizeModelNames(ignoredModels)
+	ignoredSet := make(map[string]struct{})
+	for _, modelName := range normalizeModelNames(ignoredModels) {
+		ignoredSet[modelName] = struct{}{}
+	}
 
 	redirectSourceSet := make(map[string]struct{}, len(modelMapping))
 	redirectTargetSet := make(map[string]struct{}, len(modelMapping))
@@ -191,13 +193,7 @@ func collectPendingUpstreamModelChangesFromModels(
 		if _, ok := coveredUpstreamSet[modelName]; ok {
 			return false
 		}
-		if lo.ContainsBy(normalizedIgnoredModels, func(ignoredModel string) bool {
-			if regexBody, ok := strings.CutPrefix(ignoredModel, "regex:"); ok {
-				matched, err := regexp.MatchString(strings.TrimSpace(regexBody), modelName)
-				return err == nil && matched
-			}
-			return ignoredModel == modelName
-		}) {
+		if _, ok := ignoredSet[modelName]; ok {
 			return false
 		}
 		return true

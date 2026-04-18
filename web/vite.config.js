@@ -41,9 +41,6 @@ export default defineConfig({
         if (!/src\/.*\.js$/.test(id)) {
           return null;
         }
-
-        // Use the exposed transform from vite, instead of directly
-        // transforming with esbuild
         return transformWithEsbuild(code, id, {
           loader: 'jsx',
           jsx: 'automatic',
@@ -51,9 +48,10 @@ export default defineConfig({
       },
     },
     react(),
-    vitePluginSemi({
-      cssLayer: true,
-    }),
+    // vitePluginSemi 已禁用，改用 index.jsx 中直接导入编译好的 CSS
+    // vitePluginSemi({
+    //   theme: '@douyinfe/semi-theme-default',
+    // }),
   ],
   optimizeDeps: {
     force: true,

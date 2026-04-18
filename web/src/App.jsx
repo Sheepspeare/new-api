@@ -49,6 +49,9 @@ import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
+import MessageHook from './pages/MessageHook';
+import EditMessageHook from './pages/MessageHook/EditMessageHook';
+import TestMessageHook from './pages/MessageHook/TestMessageHook';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -168,6 +171,38 @@ function App() {
           element={
             <AdminRoute>
               <User />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/message-hooks'
+          element={
+            <AdminRoute>
+              <MessageHook />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/message-hooks/create'
+          element={
+            <AdminRoute>
+              <EditMessageHook />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/message-hooks/:id/edit'
+          element={
+            <AdminRoute>
+              <EditMessageHook />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/message-hooks/test'
+          element={
+            <AdminRoute>
+              <TestMessageHook />
             </AdminRoute>
           }
         />

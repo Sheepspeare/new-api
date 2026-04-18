@@ -70,6 +70,12 @@ func RerankHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if common.DebugEnabled {
 			println(fmt.Sprintf("Rerank request body: %s", string(jsonData)))
 		}
+		
+		// 保存请求体到 context，供日志详情记录使用
+		if common.LogDetailEnabled {
+			c.Set("log_detail_request_body", string(jsonData))
+		}
+		
 		requestBody = bytes.NewBuffer(jsonData)
 	}
 
@@ -96,6 +102,6 @@ func RerankHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
 	}
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	postConsumeQuota(c, info, usage.(*dto.Usage))
 	return nil
 }

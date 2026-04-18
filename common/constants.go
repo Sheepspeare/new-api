@@ -74,13 +74,22 @@ var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
 
+var LogDetailEnabled = false             // 是否启用请求/响应详情记录
+var LogDetailMaxSize = 128 * 1024        // 单条记录最大字节数，默认128KB
+var LogDetailAutoCleanEnabled = false    // 是否启用自动清理
+var LogDetailAutoCleanDays = 30          // 自动清理天数
+
+var MessageHookDefaultTimeout = 5000     // 默认超时时间（毫秒）
+var MessageHookLuaPoolSize = 100         // Lua状态池大小
+var MessageHookHTTPPoolSize = 100        // HTTP连接池大小
+var MessageHookCacheTTL = 300            // 缓存TTL（秒）
+
 var TLSInsecureSkipVerify bool
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 
 var SMTPServer = ""
 var SMTPPort = 587
 var SMTPSSLEnabled = false
-var SMTPForceAuthLogin = false
 var SMTPAccount = ""
 var SMTPFrom = ""
 var SMTPToken = ""
@@ -115,10 +124,6 @@ var RetryTimes = 0
 //var RootUserEmail = ""
 
 var IsMasterNode bool
-
-// NodeName 节点名称，从 NODE_NAME 环境变量读取；
-// 用于审计日志中标识节点身份，在容器/K8s 部署时比自动探测到的容器内网 IP 更具可读性。
-var NodeName = ""
 
 var requestInterval int
 var RequestInterval time.Duration
@@ -182,7 +187,6 @@ var (
 	DownloadRateLimitDuration int64 = 60
 
 	// Per-user search rate limit (applies after authentication, keyed by user ID)
-	SearchRateLimitEnable         = true
 	SearchRateLimitNum            = 10
 	SearchRateLimitDuration int64 = 60
 )
@@ -217,6 +221,5 @@ const (
 const (
 	TopUpStatusPending = "pending"
 	TopUpStatusSuccess = "success"
-	TopUpStatusFailed  = "failed"
 	TopUpStatusExpired = "expired"
 )

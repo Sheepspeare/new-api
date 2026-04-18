@@ -52,6 +52,4 @@ i18n
     },
   });
 
-window.__i18n = i18n;
-
 export default i18n;

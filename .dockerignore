@@ -1,10 +1,45 @@
-.github
+# Git
 .git
-*.md
-.vscode
 .gitignore
-Makefile
-docs
+.github
+
+# Documentation
+*.md
+!README.md
+docs/
+LICENSE
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules
+web/node_modules/
+
+# Build artifacts
+web/dist/
 .eslintcache
 .gocache
-/web/node_modules
+new-api
+new-api.exe
+
+# Test files
+*_test.go
+**/*_test.go
+
+# Local data
+*.db
+*.sqlite
+data/
+logs/
+
+# Docker
+docker-compose*.yml
+Dockerfile

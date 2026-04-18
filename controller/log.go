@@ -169,3 +169,49 @@ func DeleteHistoryLogs(c *gin.Context) {
 	})
 	return
 }
+
+func GetLogDetail(c *gin.Context) {
+	requestId := c.Param("request_id")
+	if requestId == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "request_id is required",
+		})
+		return
+	}
+	detail, err := model.GetLogDetailByRequestId(requestId)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "未找到该请求的详情记录",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    detail,
+	})
+}
+
+func DeleteHistoryLogDetails(c *gin.Context) {
+	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
+	if targetTimestamp == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "target timestamp is required",
+		})
+		return
+	}
+	count, err := model.DeleteOldLogDetail(c.Request.Context(), targetTimestamp, 100)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    count,
+	})
+}
+

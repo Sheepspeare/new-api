@@ -116,7 +116,8 @@ export default function CCSwitchModal({
       Toast.warning(t('请选择主模型'));
       return;
     }
-    const url = buildCCSwitchURL(app, name, models, 'sk-' + tokenKey);
+    const apiKey = 'sk-' + tokenKey;
+    const url = buildCCSwitchURL(app, name, models, apiKey);
     window.open(url, '_blank');
     onClose();
   };

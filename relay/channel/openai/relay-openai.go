@@ -122,15 +122,16 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var streamItems []string // store stream items
 	var lastStreamData string
 	var secondLastStreamData string // 存储倒数第二个stream data，用于音频模型
+	var responseBodyBuilder strings.Builder // 用于累积完整响应体（日志详情）
 
 	// 检查是否为音频模型
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
+			if err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
-				sr.Error(err)
 			}
 		}
 		if len(data) > 0 {
@@ -141,7 +142,15 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 			lastStreamData = data
 			streamItems = append(streamItems, data)
+			
+			// 累积响应体用于日志详情
+			if common.LogDetailEnabled {
+				responseBodyBuilder.WriteString("data: ")
+				responseBodyBuilder.WriteString(data)
+				responseBodyBuilder.WriteString("\n\n")
+			}
 		}
+		return true
 	})
 
 	// 对音频模型，从倒数第二个stream data中提取usage信息
@@ -188,6 +197,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+
+	// 保存完整响应体到 context（用于日志详情）
+	if common.LogDetailEnabled {
+		c.Set("log_detail_response_body", responseBodyBuilder.String())
+		// 保存提取的文本内容
+		c.Set("log_detail_extracted_content", responseTextBuilder.String())
+	}
 
 	return usage, nil
 }
@@ -295,6 +311,21 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+
+	// 保存响应体到 context（用于日志详情）
+	if common.LogDetailEnabled {
+		c.Set("log_detail_response_body", string(responseBody))
+		// 非流式响应：从完整响应中提取文本内容
+		var extractedText strings.Builder
+		for _, choice := range simpleResponse.Choices {
+			if choice.Message.Content != nil {
+				extractedText.WriteString(choice.Message.StringContent())
+			}
+		}
+		if extractedText.Len() > 0 {
+			c.Set("log_detail_extracted_content", extractedText.String())
+		}
+	}
 
 	return &simpleResponse.Usage, nil
 }
@@ -626,12 +657,6 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 				usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
 			}
 		}
-	case constant.ChannelTypeOpenAI:
-		if usage.PromptTokensDetails.CachedTokens == 0 {
-			if cachedTokens, ok := extractLlamaCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			}
-		}
 	}
 }
 
@@ -693,26 +718,4 @@ func extractMoonshotCachedTokensFromBody(body []byte) (int, bool) {
 	}
 
 	return 0, false
-}
-
-// extractLlamaCachedTokensFromBody 从llama.cpp的非标准位置提取cache_n
-func extractLlamaCachedTokensFromBody(body []byte) (int, bool) {
-	if len(body) == 0 {
-		return 0, false
-	}
-
-	var payload struct {
-		Timings struct {
-			CachedTokens *int `json:"cache_n"`
-		} `json:"timings"`
-	}
-
-	if err := common.Unmarshal(body, &payload); err != nil {
-		return 0, false
-	}
-
-	if payload.Timings.CachedTokens == nil {
-		return 0, false
-	}
-	return *payload.Timings.CachedTokens, true
 }

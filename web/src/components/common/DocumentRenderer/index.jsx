@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { API, showError } from '../../../helpers';
 import { Empty, Card, Spin, Typography } from '@douyinfe/semi-ui';
 const { Title } = Typography;
@@ -28,7 +28,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import MarkdownRenderer from '../markdown/MarkdownRenderer';
 
-// Check whether content is a URL.
+// 检查是否为 URL
 const isUrl = (content) => {
   try {
     new URL(content.trim());
@@ -38,23 +38,27 @@ const isUrl = (content) => {
   }
 };
 
-// Check whether content contains HTML.
+// 检查是否为 HTML 内容
 const isHtmlContent = (content) => {
   if (!content || typeof content !== 'string') return false;
 
+  // 检查是否包含HTML标签
   const htmlTagRegex = /<\/?[a-z][\s\S]*>/i;
   return htmlTagRegex.test(content);
 };
 
-// Parse HTML content and extract inline styles.
+// 安全地渲染HTML内容
 const sanitizeHtml = (html) => {
+  // 创建一个临时元素来解析HTML
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = html;
 
+  // 提取样式
   const styles = Array.from(tempDiv.querySelectorAll('style'))
     .map((style) => style.innerHTML)
     .join('\n');
 
+  // 提取body内容，如果没有body标签则使用全部内容
   const bodyContent = tempDiv.querySelector('body');
   const content = bodyContent ? bodyContent.innerHTML : html;
 
@@ -72,11 +76,15 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   const { t } = useTranslation();
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
+  const [htmlStyles, setHtmlStyles] = useState('');
+  const [processedHtmlContent, setProcessedHtmlContent] = useState('');
 
   const loadContent = async () => {
+    // 先从缓存中获取
     const cachedContent = localStorage.getItem(cacheKey) || '';
     if (cachedContent) {
       setContent(cachedContent);
+      processContent(cachedContent);
       setLoading(false);
     }
 
@@ -85,6 +93,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
       const { success, message, data } = res.data;
       if (success && data) {
         setContent(data);
+        processContent(data);
         localStorage.setItem(cacheKey, data);
       } else {
         if (!cachedContent) {
@@ -102,12 +111,16 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
     }
   };
 
-  const htmlPayload = useMemo(() => {
-    if (!isHtmlContent(content)) {
-      return { content: '', styles: '' };
+  const processContent = (rawContent) => {
+    if (isHtmlContent(rawContent)) {
+      const { content: htmlContent, styles } = sanitizeHtml(rawContent);
+      setProcessedHtmlContent(htmlContent);
+      setHtmlStyles(styles);
+    } else {
+      setProcessedHtmlContent('');
+      setHtmlStyles('');
     }
-    return sanitizeHtml(content);
-  }, [content]);
+  };
 
   useEffect(() => {
     loadContent();
@@ -116,9 +129,8 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 处理HTML样式注入
   useEffect(() => {
     const styleId = `document-renderer-styles-${cacheKey}`;
-    const { styles } = htmlPayload;
 
-    if (styles) {
+    if (htmlStyles) {
       let styleEl = document.getElementById(styleId);
       if (!styleEl) {
         styleEl = document.createElement('style');
@@ -126,7 +138,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
         styleEl.type = 'text/css';
         document.head.appendChild(styleEl);
       }
-      styleEl.innerHTML = styles;
+      styleEl.innerHTML = htmlStyles;
     } else {
       const el = document.getElementById(styleId);
       if (el) el.remove();
@@ -136,7 +148,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
       const el = document.getElementById(styleId);
       if (el) el.remove();
     };
-  }, [cacheKey, htmlPayload]);
+  }, [htmlStyles, cacheKey]);
 
   // 显示加载状态
   if (loading) {
@@ -195,6 +207,15 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
 
   // 如果是 HTML 内容，直接渲染
   if (isHtmlContent(content)) {
+    const { content: htmlContent, styles } = sanitizeHtml(content);
+
+    // 设置样式（如果有的话）
+    useEffect(() => {
+      if (styles && styles !== htmlStyles) {
+        setHtmlStyles(styles);
+      }
+    }, [content, styles, htmlStyles]);
+
     return (
       <div className='min-h-screen bg-gray-50'>
         <div className='max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8'>
@@ -204,7 +225,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
             </Title>
             <div
               className='prose prose-lg max-w-none'
-              dangerouslySetInnerHTML={{ __html: htmlPayload.content }}
+              dangerouslySetInnerHTML={{ __html: htmlContent }}
             />
           </div>
         </div>

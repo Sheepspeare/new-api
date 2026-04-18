@@ -390,12 +390,6 @@ func ErrOptionWithNoRecordErrorLog() NewAPIErrorOptions {
 	}
 }
 
-func ErrOptionWithStatusCode(statusCode int) NewAPIErrorOptions {
-	return func(e *NewAPIError) {
-		e.StatusCode = statusCode
-	}
-}
-
 func ErrOptionWithHideErrMsg(replaceStr string) NewAPIErrorOptions {
 	return func(e *NewAPIError) {
 		if common.DebugEnabled {

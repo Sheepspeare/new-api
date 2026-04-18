@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -149,6 +150,37 @@ func main() {
 	err = common.StartPyroScope()
 	if err != nil {
 		common.SysError(fmt.Sprintf("start pyroscope error : %v", err))
+	}
+
+	// 日志详情自动清理任务
+	if common.LogDetailAutoCleanEnabled {
+		gopool.Go(func() {
+			// 立即执行一次清理
+			common.SysLog(fmt.Sprintf("log detail auto cleanup enabled, will clean logs older than %d days", common.LogDetailAutoCleanDays))
+			targetTimestamp := time.Now().AddDate(0, 0, -common.LogDetailAutoCleanDays).Unix()
+			deleted, err := model.DeleteOldLogDetail(context.Background(), targetTimestamp, 1000)
+			if err != nil {
+				common.SysError(fmt.Sprintf("initial auto clean log details failed: %v", err))
+			} else if deleted > 0 {
+				common.SysLog(fmt.Sprintf("initial auto cleaned %d log details", deleted))
+			}
+
+			// 启动定时器，每天执行一次
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				if !common.LogDetailAutoCleanEnabled {
+					continue
+				}
+				targetTimestamp := time.Now().AddDate(0, 0, -common.LogDetailAutoCleanDays).Unix()
+				deleted, err := model.DeleteOldLogDetail(context.Background(), targetTimestamp, 1000)
+				if err != nil {
+					common.SysError(fmt.Sprintf("auto clean log details failed: %v", err))
+				} else if deleted > 0 {
+					common.SysLog(fmt.Sprintf("auto cleaned %d log details", deleted))
+				}
+			}
+		})
 	}
 
 	// Initialize HTTP server

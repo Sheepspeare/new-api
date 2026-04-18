@@ -505,7 +505,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 }
 
 // Complete a subscription order (idempotent). Creates a UserSubscription snapshot from the plan.
-func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentMethod string) error {
+func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -522,9 +522,6 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		var order SubscriptionOrder
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
-		}
-		if expectedPaymentMethod != "" && order.PaymentMethod != expectedPaymentMethod {
-			return ErrPaymentMethodMismatch
 		}
 		if order.Status == common.TopUpStatusSuccess {
 			return nil
@@ -599,8 +596,6 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	topup.Money = order.Money
 	if topup.PaymentMethod == "" {
 		topup.PaymentMethod = order.PaymentMethod
-	} else if topup.PaymentMethod != order.PaymentMethod {
-		return ErrPaymentMethodMismatch
 	}
 	if topup.CreateTime == 0 {
 		topup.CreateTime = order.CreateTime
@@ -610,7 +605,7 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	return tx.Save(&topup).Error
 }
 
-func ExpireSubscriptionOrder(tradeNo string, expectedPaymentMethod string) error {
+func ExpireSubscriptionOrder(tradeNo string) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -622,9 +617,6 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentMethod string) error
 		var order SubscriptionOrder
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
-		}
-		if expectedPaymentMethod != "" && order.PaymentMethod != expectedPaymentMethod {
-			return ErrPaymentMethodMismatch
 		}
 		if order.Status != common.TopUpStatusPending {
 			return nil

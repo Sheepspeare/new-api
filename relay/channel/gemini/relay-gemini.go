@@ -37,8 +37,6 @@ var geminiSupportedMimeTypes = map[string]bool{
 	"image/jpeg":      true,
 	"image/jpg":       true, // support old image/jpeg
 	"image/webp":      true,
-	"image/heic":      true,
-	"image/heif":      true,
 	"text/plain":      true,
 	"video/mov":       true,
 	"video/mpeg":      true,
@@ -585,10 +583,14 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 						Text: part.Text,
 					})
 				}
-			} else {
-				source := part.ToFileSource()
-				if source == nil {
-					continue
+			} else if part.Type == dto.ContentTypeImageURL {
+				// 使用统一的文件服务获取图片数据
+				var source *types.FileSource
+				imageUrl := part.GetImageMedia().Url
+				if strings.HasPrefix(imageUrl, "http") {
+					source = types.NewURLFileSource(imageUrl)
+				} else {
+					source = types.NewBase64FileSource(imageUrl, "")
 				}
 				base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Gemini")
 				if err != nil {
@@ -600,6 +602,36 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 					return nil, fmt.Errorf("mime type is not supported by Gemini: '%s', url: '%s', supported types are: %v", mimeType, source.GetIdentifier(), getSupportedMimeTypesList())
 				}
 
+				parts = append(parts, dto.GeminiPart{
+					InlineData: &dto.GeminiInlineData{
+						MimeType: mimeType,
+						Data:     base64Data,
+					},
+				})
+			} else if part.Type == dto.ContentTypeFile {
+				if part.GetFile().FileId != "" {
+					return nil, fmt.Errorf("only base64 file is supported in gemini")
+				}
+				fileSource := types.NewBase64FileSource(part.GetFile().FileData, "")
+				base64Data, mimeType, err := service.GetBase64Data(c, fileSource, "formatting file for Gemini")
+				if err != nil {
+					return nil, fmt.Errorf("decode base64 file data failed: %s", err.Error())
+				}
+				parts = append(parts, dto.GeminiPart{
+					InlineData: &dto.GeminiInlineData{
+						MimeType: mimeType,
+						Data:     base64Data,
+					},
+				})
+			} else if part.Type == dto.ContentTypeInputAudio {
+				if part.GetInputAudio().Data == "" {
+					return nil, fmt.Errorf("only base64 audio is supported in gemini")
+				}
+				audioSource := types.NewBase64FileSource(part.GetInputAudio().Data, "audio/"+part.GetInputAudio().Format)
+				base64Data, mimeType, err := service.GetBase64Data(c, audioSource, "formatting audio for Gemini")
+				if err != nil {
+					return nil, fmt.Errorf("decode base64 audio data failed: %s", err.Error())
+				}
 				parts = append(parts, dto.GeminiPart{
 					InlineData: &dto.GeminiInlineData{
 						MimeType: mimeType,
@@ -1264,12 +1296,21 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var usage = &dto.Usage{}
 	var imageCount int
 	responseText := strings.Builder{}
+	var responseBodyBuilder strings.Builder // 用于累积完整响应体（日志详情）
 
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+		// 累积响应体用于日志详情
+		if common.LogDetailEnabled {
+			responseBodyBuilder.WriteString("data: ")
+			responseBodyBuilder.WriteString(data)
+			responseBodyBuilder.WriteString("\n\n")
+		}
+		
 		var geminiResponse dto.GeminiChatResponse
-		if err := common.UnmarshalJsonStr(data, &geminiResponse); err != nil {
-			sr.Stop(fmt.Errorf("unmarshal: %w", err))
-			return
+		err := common.UnmarshalJsonStr(data, &geminiResponse)
+		if err != nil {
+			logger.LogError(c, "error unmarshalling stream response: "+err.Error())
+			return false
 		}
 
 		if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
@@ -1294,10 +1335,15 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			*usage = mappedUsage
 		}
 
-		if !callback(data, &geminiResponse) {
-			sr.Stop(fmt.Errorf("gemini callback stopped"))
-		}
+		return callback(data, &geminiResponse)
 	})
+
+	// 保存完整响应体到 context（用于日志详情）
+	if common.LogDetailEnabled {
+		c.Set("log_detail_response_body", responseBodyBuilder.String())
+		// 保存提取的文本内容
+		c.Set("log_detail_extracted_content", responseText.String())
+	}
 
 	if imageCount != 0 {
 		if usage.CompletionTokens == 0 {
@@ -1479,6 +1525,24 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+
+	// 保存响应体到 context（用于日志详情）
+	if common.LogDetailEnabled {
+		c.Set("log_detail_response_body", string(responseBody))
+		
+		// 非流式响应：从完整响应中提取文本内容
+		var extractedText strings.Builder
+		for _, candidate := range geminiResponse.Candidates {
+			for _, part := range candidate.Content.Parts {
+				if part.Text != "" {
+					extractedText.WriteString(part.Text)
+				}
+			}
+		}
+		if extractedText.Len() > 0 {
+			c.Set("log_detail_extracted_content", extractedText.String())
+		}
+	}
 
 	return &usage, nil
 }

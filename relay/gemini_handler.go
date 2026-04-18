@@ -165,6 +165,11 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 		logger.LogDebug(c, "Gemini request body: "+string(jsonData))
 
+		// 保存请求体到 context，供日志详情记录使用
+		if common.LogDetailEnabled {
+			c.Set("log_detail_request_body", string(jsonData))
+		}
+
 		requestBody = bytes.NewReader(jsonData)
 	}
 
@@ -194,7 +199,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return openaiErr
 	}
 
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	postConsumeQuota(c, info, usage.(*dto.Usage))
 	return nil
 }
 
@@ -288,6 +293,6 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		return openaiErr
 	}
 
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	postConsumeQuota(c, info, usage.(*dto.Usage))
 	return nil
 }

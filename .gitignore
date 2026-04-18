@@ -3,6 +3,9 @@
 .zed
 .history
 upload
+.cursor/
+.kiro/
+AGENTS.md
 *.exe
 *.db
 build
@@ -21,7 +24,9 @@ tiktoken_cache
 .cache
 web/bun.lock
 plans
-.claude
+_gocache/
+_gopath/
+_codex_*
 
 electron/node_modules
 electron/dist
@@ -29,5 +34,3 @@ data/
 .gomodcache/
 .gocache-temp
 .gopath
-
-token_estimator_test.go

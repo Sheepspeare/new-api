@@ -360,7 +360,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
     {
       title: t('索引'),
       dataIndex: 'index',
-      render: (text) => `#${Number(text) + 1}`,
+      render: (text) => `#${text}`,
     },
     // {
     //   title: t('密钥预览'),

@@ -27,6 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsMessageHook from '../../pages/Setting/Operation/SettingsMessageHook';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -63,6 +64,13 @@ const OperationSetting = () => {
 
     /* 日志设置 */
     LogConsumeEnabled: false,
+    LogDetailEnabled: false,
+    LogDetailMaxSize: 131072,
+    LogDetailAutoCleanEnabled: false,
+    LogDetailAutoCleanDays: 30,
+
+    /* 消息钩子设置 */
+    MessageHookDefaultTimeout: 5000,
 
     /* 监控设置 */
     ChannelDisableThreshold: 0,
@@ -141,6 +149,10 @@ const OperationSetting = () => {
         {/* 日志设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsLog options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 消息钩子设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsMessageHook options={inputs} refresh={onRefresh} />
         </Card>
         {/* 监控设置 */}
         <Card style={{ marginTop: '10px' }}>

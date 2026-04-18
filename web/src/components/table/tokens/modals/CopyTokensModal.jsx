@@ -20,21 +20,24 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Modal, Button, Space } from '@douyinfe/semi-ui';
 
-const CopyTokensModal = ({
-  visible,
-  onCancel,
-  batchCopyTokens,
-  t,
-}) => {
+const CopyTokensModal = ({ visible, onCancel, selectedKeys, copyText, t }) => {
   // Handle copy with name and key format
   const handleCopyWithName = async () => {
-    await batchCopyTokens('name+key');
+    let content = '';
+    for (let i = 0; i < selectedKeys.length; i++) {
+      content += selectedKeys[i].name + '    sk-' + selectedKeys[i].key + '\n';
+    }
+    await copyText(content);
     onCancel();
   };
 
   // Handle copy with key only format
   const handleCopyKeyOnly = async () => {
-    await batchCopyTokens('key-only');
+    let content = '';
+    for (let i = 0; i < selectedKeys.length; i++) {
+      content += 'sk-' + selectedKeys[i].key + '\n';
+    }
+    await copyText(content);
     onCancel();
   };
 

@@ -1,0 +1,12 @@
+/* MessageHook 页面自定义样式 */
+
+/* 可自由拖拽高度的自适应文本框：同时支持 autosize 自动展开 + 手动拖拽调整 */
+.resizable-textarea textarea {
+  resize: vertical !important;
+  overflow: auto !important;
+}
+
+/* 只读文本框文字颜色修正（Semi Design readonly 默认使灰色） */
+.readable-textarea textarea {
+  color: var(--semi-color-text-0) !important;
+}

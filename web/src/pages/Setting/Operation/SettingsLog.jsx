@@ -44,16 +44,22 @@ export default function SettingsLog(props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [loadingCleanHistoryLog, setLoadingCleanHistoryLog] = useState(false);
+  const [loadingCleanHistoryLogDetail, setLoadingCleanHistoryLogDetail] = useState(false);
   const [inputs, setInputs] = useState({
     LogConsumeEnabled: false,
+    LogDetailEnabled: false,
+    LogDetailMaxSize: 131072,
+    LogDetailAutoCleanEnabled: false,
+    LogDetailAutoCleanDays: 30,
     historyTimestamp: dayjs().subtract(1, 'month').toDate(),
+    historyDetailTimestamp: dayjs().subtract(1, 'month').toDate(),
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
 
   function onSubmit() {
     const updateArray = compareObjects(inputs, inputsRow).filter(
-      (item) => item.key !== 'historyTimestamp',
+      (item) => item.key !== 'historyTimestamp' && item.key !== 'historyDetailTimestamp',
     );
 
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
@@ -179,6 +185,97 @@ export default function SettingsLog(props) {
     });
   }
 
+  async function onCleanHistoryLogDetail() {
+    if (!inputs.historyDetailTimestamp) {
+      showError(t('请选择日志详情记录时间'));
+      return;
+    }
+
+    const now = dayjs();
+    const targetDate = dayjs(inputs.historyDetailTimestamp);
+    const targetTime = targetDate.format('YYYY-MM-DD HH:mm:ss');
+    const currentTime = now.format('YYYY-MM-DD HH:mm:ss');
+    const daysDiff = now.diff(targetDate, 'day');
+
+    Modal.confirm({
+      title: t('确认清除历史日志详情'),
+      content: (
+        <div style={{ lineHeight: '1.8' }}>
+          <p>
+            <Text>{t('当前时间')}：</Text>
+            <Text strong style={{ color: '#52c41a' }}>
+              {currentTime}
+            </Text>
+          </p>
+          <p>
+            <Text>{t('选择时间')}：</Text>
+            <Text strong type='danger'>
+              {targetTime}
+            </Text>
+            {daysDiff > 0 && (
+              <Text type='tertiary'>
+                {' '}
+                ({t('约')} {daysDiff} {t('天前')})
+              </Text>
+            )}
+          </p>
+          <div
+            style={{
+              background: '#fff7e6',
+              border: '1px solid #ffd591',
+              padding: '12px',
+              borderRadius: '4px',
+              marginTop: '12px',
+              color: '#333',
+            }}
+          >
+            <Text strong style={{ color: '#d46b08' }}>
+              ⚠️ {t('注意')}：
+            </Text>
+            <Text style={{ color: '#333' }}>{t('将删除')} </Text>
+            <Text strong style={{ color: '#cf1322' }}>
+              {targetTime}
+            </Text>
+            {daysDiff > 0 && (
+              <Text style={{ color: '#8c8c8c' }}>
+                {' '}
+                ({t('约')} {daysDiff} {t('天前')})
+              </Text>
+            )}
+            <Text style={{ color: '#333' }}> {t('之前的所有日志详情')}</Text>
+          </div>
+          <p style={{ marginTop: '12px' }}>
+            <Text type='danger'>
+              {t('此操作不可恢复，请仔细确认时间后再操作！')}
+            </Text>
+          </p>
+        </div>
+      ),
+      okText: t('确认删除'),
+      cancelText: t('取消'),
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          setLoadingCleanHistoryLogDetail(true);
+          const res = await API.delete(
+            `/api/log/detail?target_timestamp=${Date.parse(inputs.historyDetailTimestamp) / 1000}`,
+          );
+          const { success, message, data } = res.data;
+          if (success) {
+            showSuccess(`${data} ${t('条日志详情已清理！')}`);
+            return;
+          } else {
+            throw new Error(t('日志详情清理失败：') + message);
+          }
+        } catch (error) {
+          showError(error.message);
+        } finally {
+          setLoadingCleanHistoryLogDetail(false);
+        }
+      },
+    });
+  }
+
   useEffect(() => {
     const currentInputs = {};
     for (let key in props.options) {
@@ -187,6 +284,7 @@ export default function SettingsLog(props) {
       }
     }
     currentInputs['historyTimestamp'] = inputs.historyTimestamp;
+    currentInputs['historyDetailTimestamp'] = inputs.historyDetailTimestamp;
     setInputs(Object.assign(inputs, currentInputs));
     setInputsRow(structuredClone(currentInputs));
     refForm.current.setValues(currentInputs);
@@ -243,6 +341,123 @@ export default function SettingsLog(props) {
                     onClick={onCleanHistoryLog}
                   >
                     {t('清除历史日志')}
+                  </Button>
+                </Spin>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'LogDetailEnabled'}
+                  label={t('启用请求/响应详情记录')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      LogDetailEnabled: value,
+                    });
+                  }}
+                />
+                <Text
+                  type='tertiary'
+                  size='small'
+                  style={{ display: 'block', marginTop: 4 }}
+                >
+                  {t('记录完整的请求和响应内容，便于调试和学习')}
+                </Text>
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  field={'LogDetailMaxSize'}
+                  label={t('详情最大存储大小（字节）')}
+                  placeholder={t('默认 131072 (128KB)')}
+                  min={1024}
+                  max={1048576}
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      LogDetailMaxSize: value,
+                    });
+                  }}
+                />
+                <Text
+                  type='tertiary'
+                  size='small'
+                  style={{ display: 'block', marginTop: 4 }}
+                >
+                  {t('超出此大小的内容将被截断')}
+                </Text>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'LogDetailAutoCleanEnabled'}
+                  label={t('启用详情自动清理')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      LogDetailAutoCleanEnabled: value,
+                    });
+                  }}
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  field={'LogDetailAutoCleanDays'}
+                  label={t('详情自动清理天数')}
+                  placeholder={t('默认 30 天')}
+                  min={1}
+                  max={365}
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      LogDetailAutoCleanDays: value,
+                    });
+                  }}
+                />
+                <Text
+                  type='tertiary'
+                  size='small'
+                  style={{ display: 'block', marginTop: 4 }}
+                >
+                  {t('自动清理指定天数之前的日志详情')}
+                </Text>
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Spin spinning={loadingCleanHistoryLogDetail}>
+                  <Form.DatePicker
+                    label={t('清除历史日志详情')}
+                    field={'historyDetailTimestamp'}
+                    type='dateTime'
+                    inputReadOnly={true}
+                    onChange={(value) => {
+                      setInputs({
+                        ...inputs,
+                        historyDetailTimestamp: value,
+                      });
+                    }}
+                  />
+                  <Text
+                    type='tertiary'
+                    size='small'
+                    style={{ display: 'block', marginTop: 4, marginBottom: 8 }}
+                  >
+                    {t('将清除选定时间之前的所有日志详情')}
+                  </Text>
+                  <Button
+                    size='default'
+                    type='danger'
+                    onClick={onCleanHistoryLogDetail}
+                  >
+                    {t('清除历史日志详情')}
                   </Button>
                 </Spin>
               </Col>
