@@ -530,6 +530,315 @@ if common.LogDetailAutoCleanEnabled {
 }
 ```
 
+### 8. 响应体日志模块化改造建议
+
+这一块是值得单独抽模块的，而且建议先做“轻改造版”，不要一上来就把所有 relay handler 全部重写。
+
+当前实现的问题不是“不能用”，而是有三个明显痛点：
+
+1. 响应体日志采集入口分散在多个 handler 中，后续每加一种响应类型都要重复写一遍。
+2. “记录原始上游响应”与“记录最终返回给客户端的响应”这两个概念混在一起，后续很容易越改越乱。
+3. 文本提取逻辑跟具体 provider 强绑定，OpenAI、Claude、Gemini、Responses、Task 类响应的解析方式并不一致。
+
+因此更合适的做法不是把日志逻辑塞进某一个公共函数，而是单独做一个“小型编排模块”，负责：
+
+- 统一缓存 request/response 日志数据
+- 统一做大小限制和截断
+- 统一做文本提取分发
+- 统一把结果回填到 `gin.Context`
+- 尽量不接管原有业务 handler 的核心转发流程
+
+#### 推荐模块边界
+
+建议新增一个独立包，例如：
+
+```text
+relay/logcapture/
+  context.go
+  collector.go
+  parser.go
+  parser_openai.go
+  parser_claude.go
+  parser_gemini.go
+  parser_generic.go
+```
+
+其中职责尽量拆开：
+
+- `context.go`
+  - 统一定义 `log_detail_request_body`
+  - 统一定义 `log_detail_response_body`
+  - 统一定义 `log_detail_extracted_content`
+  - 对外提供 `SetRequestBody`、`FinalizeToContext` 之类的辅助函数
+- `collector.go`
+  - 负责字节累积、大小限制、流式分块缓存
+  - 不关心具体 provider 语义
+- `parser.go`
+  - 定义统一解析接口
+  - 只负责“如何从响应中提取文本/摘要”
+- `parser_xxx.go`
+  - 负责各 provider 或各响应模式的具体解析
+
+这样做的好处是：业务 handler 仍然只管请求转换和转发，日志模块只管“旁路采集”和“解析提取”，耦合会明显比现在低。
+
+#### 推荐先保留的数据语义
+
+为了不改数据库结构，第一阶段建议继续沿用现有三字段语义：
+
+- `request_body`
+  - 发给上游前的最终请求体
+- `response_body`
+  - 最终返回给客户端的响应体
+- `extracted_content`
+  - 从响应体中提取出来的可读文本
+
+这里有一个重要取舍：
+
+- 先不要在第一阶段强行区分 `raw_upstream_body` 和 `client_response_body`
+- 因为当前表结构只有一个 `response_body`
+- 很多兼容模式下，上游响应和客户端响应本来就不是同一个格式
+
+如果后面确实需要同时保留“上游原始响应”和“客户端最终响应”，建议第二阶段再扩表，不要在第一阶段把现有逻辑复杂化。
+
+#### 核心接口示例
+
+下面是一种比较稳妥的接口设计，核心思路是“采集器”和“解析器”分离：
+
+```go
+package logcapture
+
+import (
+	"strings"
+
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+)
+
+type ParseResult struct {
+	ResponseBody     string
+	ExtractedContent string
+	SkipStore        bool
+}
+
+type ResponseParser interface {
+	Name() string
+	Match(info *relaycommon.RelayInfo, contentType string) bool
+	ParseResponse(info *relaycommon.RelayInfo, body []byte, contentType string) (*ParseResult, error)
+}
+
+type StreamParser interface {
+	Name() string
+	Match(info *relaycommon.RelayInfo, contentType string) bool
+	ParseChunk(line string) (deltaText string, shouldKeep bool, err error)
+}
+
+type Collector struct {
+	maxSize         int
+	responseBuilder strings.Builder
+	textBuilder     strings.Builder
+}
+
+func NewCollector(maxSize int) *Collector
+func (c *Collector) AppendResponseChunk(chunk string)
+func (c *Collector) AppendTextDelta(delta string)
+func (c *Collector) Finalize() (responseBody string, extractedContent string)
+```
+
+这个设计的重点在于：
+
+- `Collector` 只管收集，不关心这是 OpenAI 还是 Claude
+- `ResponseParser` 只管解析，不关心数据最后怎么写入 `gin.Context`
+- handler 最多只需要增加 1 到 2 行调用
+
+#### 推荐接入方式
+
+建议分两期。
+
+#### 第一阶段：轻改造，优先落地
+
+目标是把“日志采集代码”从各 handler 中抽掉一层，但不改变原来的响应处理主流程。
+
+接入方式大致如下：
+
+1. 请求体阶段
+   - 在现有 `compatible_handler.go`、`audio_handler.go`、`responses_handler.go` 等入口，改为统一调用 `logcapture.SetRequestBody(c, bodyBytes)`。
+2. 非流式响应阶段
+   - 当前很多 handler 已经有 `io.ReadAll(resp.Body)`，读取后不直接 `c.Set(...)`
+   - 改成调用 `logcapture.CaptureResponse(c, info, responseBody, contentType)`
+3. 流式响应阶段
+   - 保留原有 scanner/stream loop
+   - 每个 chunk 处理完后调用 `collector.AppendResponseChunk(...)`
+   - 文本增量统一交给 parser 或 handler 提供给 `collector.AppendTextDelta(...)`
+4. 结算阶段
+   - `service/quota.go` 和 `relay/compatible_handler.go` 继续只从 context 读最终结果
+   - 不需要知道具体是哪种 provider
+
+这一阶段的优点：
+
+- 改动面可控
+- 不需要改数据库
+- 不需要一次性统一所有 relay handler 的实现风格
+- 出问题时容易回滚
+
+#### 第二阶段：深改造，可选
+
+如果后面希望连“最终写给客户端的响应体”也统一捕获，可以再把 `relay/common/response_writer.go` 纳入进来，做成一个通用兜底层。
+
+适合第二阶段做的事情：
+
+- 所有非流式 JSON 返回尽量统一走 `LogResponseWriter`
+- 所有 SSE 输出尽量统一通过包装 writer 采集
+- 对未适配 parser 的渠道至少保留原始文本/事件流
+- 必要时扩表保存 `upstream_response_body`
+
+这一阶段复杂度会明显上升，因为它开始触碰“响应写回”链路，不再只是旁路记录。
+
+#### 建议覆盖的响应场景
+
+这个任务真正复杂的地方，不是“写一个模块”，而是“不同场景下 response body 到底长什么样”。
+
+至少要分成下面几类：
+
+1. 非流式 JSON 文本响应
+   - 例如 `chat/completions`、`responses`、`claude messages`、`gemini generateContent`
+   - 这类最容易做，读完整 body 后解析即可
+2. 流式 SSE 响应
+   - 例如 OpenAI/Claude/Gemini 的流式输出
+   - 需要在 chunk 级别做累积和文本提取
+3. 兼容转换响应
+   - 例如上游走 `responses`，客户端拿到的是 `chat/completions`
+   - 这类要明确 `response_body` 存哪一份，第一阶段建议存最终回给客户端的那一份
+4. 图片/多模态响应
+   - 可能返回 `url`、`b64_json`、tool call、图片生成元数据
+   - 这类通常不适合提取纯文本，可只记录响应体，必要时提取摘要
+5. 音频/二进制响应
+   - 例如 `audio/speech`
+   - 不建议直接保存原始二进制到 `response_body`
+   - 建议记录占位信息，例如 `content-type`、大小、是否已省略
+6. 异步 Task 提交/查询响应
+   - 提交时通常返回任务 ID
+   - 查询时返回状态、进度、结果 URL
+   - 这类更像结构化 JSON，不适合复用聊天文本提取逻辑
+7. 错误响应
+   - 包括上游非 200、网关转换失败、SSE 中途断流
+   - 如果希望日志体系完整，这部分后面也应该接入，而不是只记录成功路径
+
+#### 建议的解析策略
+
+不要试图做一个“万能 JSON 提取器”吃掉所有场景，这样很快会变成规则泥团。更稳妥的策略是“注册式解析器”：
+
+```go
+type ParserRegistry struct {
+	responseParsers []ResponseParser
+	streamParsers   []StreamParser
+}
+
+func (r *ParserRegistry) FindResponseParser(info *relaycommon.RelayInfo, contentType string) ResponseParser
+func (r *ParserRegistry) FindStreamParser(info *relaycommon.RelayInfo, contentType string) StreamParser
+```
+
+推荐优先做下面几类 parser：
+
+- `OpenAIChatParser`
+- `OpenAIResponsesParser`
+- `ClaudeParser`
+- `GeminiParser`
+- `GenericJSONParser`
+- `BinaryResponseParser`
+- `TaskJSONParser`
+
+其中：
+
+- `GenericJSONParser` 负责兜底，只记录 body，不强行提取复杂文本
+- `BinaryResponseParser` 负责避免把音频/文件直接塞进数据库
+- `TaskJSONParser` 只提取 `task_id`、`status`、`reason`、`url` 这类摘要信息
+
+#### 对现有代码的最小侵入接法
+
+如果目标是“尽量不与源码耦合得很紧”，那就不要让日志模块反向依赖太多业务 DTO。
+
+比较合适的做法是：
+
+1. 核心模块只依赖：
+   - `gin.Context`
+   - `relay/common.RelayInfo`
+   - `common` 包里的配置与 JSON 包装函数
+2. provider 特有 DTO 只放在各自 parser 文件中
+3. handler 中只留下极薄的一层调用：
+
+```go
+if common.LogDetailEnabled {
+	logcapture.CaptureResponse(c, info, responseBody, resp.Header.Get("Content-Type"))
+}
+```
+
+流式场景则类似：
+
+```go
+collector := logcapture.NewCollector(common.LogDetailMaxSize)
+
+for scanner.Scan() {
+	line := scanner.Text()
+	delta, keep, err := parser.ParseChunk(line)
+	if keep {
+		collector.AppendResponseChunk(line + "\n")
+	}
+	if delta != "" {
+		collector.AppendTextDelta(delta)
+	}
+}
+
+logcapture.FinalizeCollectorToContext(c, collector)
+```
+
+这样即使以后要换 parser 或增加新 provider，业务 handler 也不需要跟着改很多。
+
+#### 复杂度评估
+
+如果只做第一阶段，也就是：
+
+- 抽出统一的 `logcapture` 模块
+- 收敛 `c.Set(...)` 的写法
+- 收敛响应体大小限制
+- 收敛文本提取分发
+- 先覆盖 OpenAI、Claude、Gemini、Responses、Task 几大类
+
+那么复杂度我认为是“中等偏上”，不是特别简单，但完全可控。
+
+复杂的地方主要有这几个：
+
+1. 流式和非流式是两套处理模型
+2. `responses` 与 `chat/completions` 存在互转场景
+3. 图片、音频、任务类响应并不适合复用聊天提取逻辑
+4. 错误路径现在并没有完全纳入同一条记录链路
+5. 现有日志入库时机在 quota 结算附近，不是所有分支都天然会走到这里
+
+但如果把目标控制在“先模块化、先统一入口、先覆盖主流文本渠道”，这件事并不会失控。
+
+更直接地说：
+
+- 先做模块化：复杂度中等
+- 想一次性覆盖所有渠道且统一精准提取：复杂度偏高
+- 想连错误链路、二进制响应、上游原始响应也一起做完整：复杂度高
+
+#### 实施建议
+
+建议按下面顺序推进：
+
+1. 先做 `relay/logcapture` 模块骨架
+2. 先接 OpenAI 非流式与流式
+3. 再接 Claude、Gemini
+4. 再补 `responses` 与 `chat via responses`
+5. 再补 task、image、audio 这类非纯文本响应
+6. 最后再考虑是否把 `LogResponseWriter` 纳入统一兜底层
+
+如果只问结论：
+
+- 可以单独抽模块
+- 而且值得抽
+- 但建议先做轻改造版本
+- 多场景响应体判断解析不算简单，属于中等偏上复杂度
+- 只要分阶段做，不需要把它看成一个特别重的大工程
+
 ---
 ## 前端实现
 

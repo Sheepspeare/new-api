@@ -17,6 +17,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func setResponsesLogDetail(c *gin.Context, responseBody string, extractedContent string) {
+	if !common.LogDetailEnabled {
+		return
+	}
+	c.Set("log_detail_response_body", responseBody)
+	if extractedContent != "" {
+		c.Set("log_detail_extracted_content", extractedContent)
+	}
+}
+
+func appendResponsesStreamEvent(builder *strings.Builder, eventType string, data string) {
+	if builder == nil || data == "" {
+		return
+	}
+	if eventType != "" {
+		builder.WriteString("event: ")
+		builder.WriteString(eventType)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("data: ")
+	builder.WriteString(data)
+	builder.WriteString("\n\n")
+}
+
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -42,6 +66,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	setResponsesLogDetail(c, string(responseBody), service.ExtractOutputTextFromResponses(&responsesResponse))
 
 	// compute usage
 	usage := dto.Usage{}
@@ -78,16 +103,22 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	var responseBodyBuilder strings.Builder
+	var finalizedResponseBody string
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err == nil {
+			appendResponsesStreamEvent(&responseBodyBuilder, streamResponse.Type, data)
 			sendResponsesStreamData(c, streamResponse, data)
 			switch streamResponse.Type {
 			case "response.completed":
 				if streamResponse.Response != nil {
+					if responseJson, marshalErr := common.Marshal(streamResponse.Response); marshalErr == nil {
+						finalizedResponseBody = string(responseJson)
+					}
 					if streamResponse.Response.Usage != nil {
 						if streamResponse.Response.Usage.InputTokens != 0 {
 							usage.PromptTokens = streamResponse.Response.Usage.InputTokens
@@ -106,6 +137,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 						c.Set("image_generation_call", true)
 						c.Set("image_generation_call_quality", streamResponse.Response.GetQuality())
 						c.Set("image_generation_call_size", streamResponse.Response.GetSize())
+					}
+					if responseTextBuilder.Len() == 0 {
+						responseTextBuilder.WriteString(service.ExtractOutputTextFromResponses(streamResponse.Response))
 					}
 				}
 			case "response.output_text.delta":
@@ -145,6 +179,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	if finalizedResponseBody != "" {
+		setResponsesLogDetail(c, finalizedResponseBody, responseTextBuilder.String())
+	} else {
+		setResponsesLogDetail(c, responseBodyBuilder.String(), responseTextBuilder.String())
+	}
 
 	return usage, nil
 }

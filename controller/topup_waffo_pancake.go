@@ -1,3 +1,6 @@
+//go:build waffo
+// +build waffo
+
 package controller
 
 import (
